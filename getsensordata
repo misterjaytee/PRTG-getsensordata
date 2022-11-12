@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+
+############################################################
+#                                                          #
+# Get PRTG data from last month                            #
+# and import into own backend database (e.g. MySQL)        #
+#                                                          #
+# Author: Jim Turnbull                                     #
+# Modified: 12/11/2022                                     #
+# Version 0.9                                              #
+#                                                          #
+############################################################
+
+import sys
+
+# Check for minimum Python version 3.9
+v=[sys.version_info.major, sys.version_info.minor]
+
+if v[0] < 3 or v[1] < 9:
+    print("Python version 3.9 or above required to run this script")
+    exit()
+
+# Read in sections from config file
+filename="config.ini"
+
+from configparser import ConfigParser
+
+parser=ConfigParser()
+parser.read(filename)
+database=parser["database"]
+prtg=parser["prtg"]
+sensorarray=parser["sensors"]
+debug=int(parser["debug"].get("debug", fallback="0"))
+debugdays=int(parser["debug"].get("debugdays", fallback="4"))
+dbaction=str(database.get("action", fallback="fail"))
+dbport=int(database.get("port", fallback="0"))
+strdbport=":" + str(dbport) if dbport !=0 else ""
+
+# Set month from command line if passed, otherwise get from config file
+if len(sys.argv) == 2:
+    if int(sys.argv[1]) >= 0 and int(sys.argv[1]) <= 12:
+        month=int(sys.argv[1])
+    else:
+        print("Please specify month between 1 and 12")
+        exit()
+else:
+    month=int(parser["config"].get("month", fallback="0"))
+
+
+# Construct PRTG variables
+url=str("https://" + prtg["prtghost"] + "/api/historicdata.csv?")
+apitoken=prtg["apitoken"]
+
+# Construct database connection string for sqlalchemy
+connectionstring=str(database["backend"] + "+" + 
+    database["driver"] + "://" + 
+    database["username"] + ":" + 
+    database["password"] + "@" + 
+    database["hostname"] + 
+    strdbport + "/" + 
+    database["database"])
+
+# Import required Python modules
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import pandas as pd
+from sqlalchemy import create_engine, false, inspect, schema, true
+
+# Work out start and end dates, ensuring
+# year goes to previous year if run in January
+now=datetime.now()
+if month==0:
+    lastmonth=(now - relativedelta(months=1))
+    first_date=datetime(lastmonth.year, lastmonth.month, 1)
+    end_date=datetime(now.year, now.month, 1)
+# Work out start and end dates if month
+# specified in config file
+else:
+    if month > 12:
+        print("Month greater than 12, setting month to 12")
+        month=12
+    # If month in file is same as this month, assume that we want to download the data from same month last year
+    lastmonth=(now - relativedelta(months=now.month + 12 - month if month > now.month else 12 if now.month==month else now.month - month))
+    first_date=datetime(lastmonth.year, lastmonth.month, 1)
+    end_date=datetime(lastmonth.year + 1 if month==12 else lastmonth.year, 1 if month == 12 else month + 1, 1)
+
+# For debug (less days) add debug="1" to the debug section in the ini file
+if debug==1:
+    end_date=end_date.replace(month=lastmonth.month,day=debugdays)
+
+day_count=(end_date-first_date).days
+
+print("Fetching data from " + prtg["prtghost"] + " for " + first_date.strftime("%B %Y"))
+
+engine = create_engine(connectionstring)
+insp=inspect(engine)
+
+
+def exportdata(table,sensor):
+    
+    # Check if we already have data for the requested month for this sensor
+    # and if so, then return immediately as we do not want to duplicate data
+    hadtable=false
+    check_date=(end_date - timedelta(days=1)).strftime('%d/%m/%Y')
+    if insp.has_table(table):
+        hadtable=true
+        check=engine.execute("select * from " + str(table) + " where `DateTime` like '" + check_date + " %%' limit 1;")
+        if check.rowcount > 0:
+            print("Sensor data for " + str(table) + " already exists in database " + str(database["database"]) + " for " + first_date.strftime("%B %Y") )
+            return
+
+    # Build URL for the first day in the dataset
+    # so that we have our column data and initial results
+
+    print("Getting sensor data for " + str(table) + ": " + str(first_date),"\r",end='')
+    getURL=str(url +
+        "id=" + sensor +
+        "&sdate=" + first_date.strftime('%Y-%m-%d-00-00-00') +
+        "&edate=" + (first_date + timedelta(days=1)).strftime('%Y-%m-%d-00-00-00') +
+        "&avg=0&pctavg=0&pctshow=false&pct=0&pctmode=false" +
+        "&apitoken=" + apitoken)
+
+    # Get data from URL
+    alldata=pd.read_csv(getURL)
+
+    getURL=""
+
+    # Now iterate through the remaining days and add them to the dataset
+    for single_date in ((first_date + timedelta(days=1)) + timedelta(n) for n in range(day_count - 1)):
+        print("Getting sensor data for " + str(table) + ": " + str(single_date),"\r",end='')
+        getURL=str(url +
+        "id=" + sensor +
+        "&sdate=" + single_date.strftime('%Y-%m-%d-00-00-00') +
+        "&edate=" + (single_date + timedelta(days=1)).strftime('%Y-%m-%d-00-00-00') +
+        "&avg=0&pctavg=0&pctshow=false&pct=0&pctmode=false" +
+        "&apitoken=" + apitoken)
+        alldata=pd.concat([alldata,pd.read_csv(getURL)],ignore_index=True, sort=False)
+
+    print(' ' * (len("Getting sensor data for " + str(table) + ": " + str(first_date))),"\r",end='')
+    print("Writing " + str(table) + " data to database " + str(database["database"]),"\r",end='')
+
+    # Strip spaces from column names
+    alldata.columns = [c.replace(' ','') for c in alldata.columns]
+
+    # Drop rows of data where PRTG has added
+    # Sums or Averages which appear in the 'DateTime' field
+    alldata = alldata[~alldata['DateTime'].str.contains('Sums')]
+    alldata = alldata[~alldata['DateTime'].str.contains('Averages')]
+
+    if hadtable==false:
+        alldata.index += 1
+        alldata.to_sql(table, con=engine, if_exists=dbaction, index=True, index_label='id')
+        engine.execute('ALTER TABLE ' + str(table) + ' MODIFY id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY;')
+    else:
+        alldata.to_sql(table, con=engine, if_exists=dbaction, index=False)
+
+    print(' ' * len("Writing " + str(table) + " data to database " + str(database["database"])),"\r",end='')
+    print("Data for", table, "written to database", str(database["database"]))
+
+
+for sensor in sensorarray:
+    exportdata(sensor,sensorarray[sensor])

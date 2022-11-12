@@ -1,0 +1,42 @@
+# Example config.ini
+# Copy/move this file to config.ini
+# and edit as appropriate for your environment
+
+[config]
+# Add a month number to get a specific month of data
+# e.g month=8 will get August's data for this year
+# Setting month to the same as the current month
+# will download the same month but in the previous year.
+# Default is month=0 to get last month's data
+month=0
+
+[database]
+backend=mysql
+driver=pymysql
+hostname=localhost
+database=prtg_historicdata
+username=prtguser
+password=mysecretpassword
+# Set port to 0 to use default for db engine
+port=3306
+# What action to perform if the table already exists
+# default action is fail
+action=append
+
+# Add sensors below
+# The variable is the name of the table you want to create/update
+# The value is the sensor id in prtg
+[sensors]
+custombandwidth=12345
+factorysessions=23456
+transitsitea=34567
+transitsiteb=45678
+transitsitec=56789
+
+[prtg]
+apitoken=TOKENVALUEFROMPRTG======
+prtghost=prtg.example.com
+
+[debug]
+debug=0
+debugdays=4
