@@ -6,8 +6,8 @@
 # and import into own backend database (e.g. MySQL)        #
 #                                                          #
 # Author: Jim Turnbull                                     #
-# Modified: 12/11/2022                                     #
-# Version 0.9                                              #
+# Modified: 13/11/2022                                     #
+# Version 0.10                                             #
 #                                                          #
 ############################################################
 
@@ -23,18 +23,27 @@ if v[0] < 3 or v[1] < 9:
 # Read in sections from config file
 filename="config.ini"
 
-from configparser import ConfigParser
+try:
+    from configparser import ConfigParser
+except:
+    print("Failed to load configparser, please make sure that the module is installed")
+    exit()
 
-parser=ConfigParser()
-parser.read(filename)
-database=parser["database"]
-prtg=parser["prtg"]
-sensorarray=parser["sensors"]
-debug=int(parser["debug"].get("debug", fallback="0"))
-debugdays=int(parser["debug"].get("debugdays", fallback="4"))
-dbaction=str(database.get("action", fallback="fail"))
-dbport=int(database.get("port", fallback="0"))
-strdbport=":" + str(dbport) if dbport !=0 else ""
+try:
+    parser=ConfigParser()
+    parser.read(filename)
+    database=parser["database"]
+    prtg=parser["prtg"]
+    sensorarray=parser["sensors"]
+    debug=int(parser["debug"].get("debug", fallback="0"))
+    debugdays=int(parser["debug"].get("debugdays", fallback="4"))
+    dbaction=str(database.get("action", fallback="fail"))
+    dbport=int(database.get("port", fallback="0"))
+    strdbport=":" + str(dbport) if dbport !=0 else ""
+    db = str(database["database"])
+except:
+    print("Could not read configuration file, or required parameters are missing")
+    exit()
 
 # Set month from command line if passed, otherwise get from config file
 if len(sys.argv) == 2:
@@ -61,10 +70,14 @@ connectionstring=str(database["backend"] + "+" +
     database["database"])
 
 # Import required Python modules
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import pandas as pd
-from sqlalchemy import create_engine, false, inspect, schema, true
+try:
+    from datetime import datetime, timedelta
+    from dateutil.relativedelta import relativedelta
+    import pandas as pd
+    from sqlalchemy import create_engine, false, inspect, schema, true
+except:
+    print("Could not load required modules. Try installing by running:\npip3 install -r requirements.txt")
+    exit()
 
 # Work out start and end dates, ensuring
 # year goes to previous year if run in January
@@ -92,8 +105,12 @@ day_count=(end_date-first_date).days
 
 print("Fetching data from " + prtg["prtghost"] + " for " + first_date.strftime("%B %Y"))
 
-engine = create_engine(connectionstring)
-insp=inspect(engine)
+try:
+    engine = create_engine(connectionstring)
+    insp=inspect(engine)
+except:
+    print("Could not access database", db)
+    exit()
 
 
 def exportdata(table,sensor):
@@ -106,7 +123,7 @@ def exportdata(table,sensor):
         hadtable=true
         check=engine.execute("select * from " + str(table) + " where `DateTime` like '" + check_date + " %%' limit 1;")
         if check.rowcount > 0:
-            print("Sensor data for " + str(table) + " already exists in database " + str(database["database"]) + " for " + first_date.strftime("%B %Y") )
+            print("Sensor data for " + str(table) + " already exists in database " + db + " for " + first_date.strftime("%B %Y") )
             return
 
     # Build URL for the first day in the dataset
@@ -121,7 +138,11 @@ def exportdata(table,sensor):
         "&apitoken=" + apitoken)
 
     # Get data from URL
-    alldata=pd.read_csv(getURL)
+    try:
+        alldata=pd.read_csv(getURL)
+    except:
+        print("Could not fetch data from", url)
+        exit()
 
     getURL=""
 
@@ -137,7 +158,7 @@ def exportdata(table,sensor):
         alldata=pd.concat([alldata,pd.read_csv(getURL)],ignore_index=True, sort=False)
 
     print(' ' * (len("Getting sensor data for " + str(table) + ": " + str(first_date))),"\r",end='')
-    print("Writing " + str(table) + " data to database " + str(database["database"]),"\r",end='')
+    print("Writing " + str(table) + " data to database " + db,"\r",end='')
 
     # Strip spaces from column names
     alldata.columns = [c.replace(' ','') for c in alldata.columns]
@@ -147,15 +168,19 @@ def exportdata(table,sensor):
     alldata = alldata[~alldata['DateTime'].str.contains('Sums')]
     alldata = alldata[~alldata['DateTime'].str.contains('Averages')]
 
-    if hadtable==false:
-        alldata.index += 1
-        alldata.to_sql(table, con=engine, if_exists=dbaction, index=True, index_label='id')
-        engine.execute('ALTER TABLE ' + str(table) + ' MODIFY id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY;')
-    else:
-        alldata.to_sql(table, con=engine, if_exists=dbaction, index=False)
+    try:
+        if hadtable==false:
+            alldata.index += 1
+            alldata.to_sql(table, con=engine, if_exists=dbaction, index=True, index_label='id')
+            engine.execute('ALTER TABLE ' + str(table) + ' MODIFY id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY;')
+        else:
+            alldata.to_sql(table, con=engine, if_exists=dbaction, index=False)
+    except:
+        print("Error writing to database", db)
+        exit()
 
-    print(' ' * len("Writing " + str(table) + " data to database " + str(database["database"])),"\r",end='')
-    print("Data for", table, "written to database", str(database["database"]))
+    print(' ' * len("Writing " + str(table) + " data to database " + db),"\r",end='')
+    print("Data for", table, "written to database", db)
 
 
 for sensor in sensorarray:

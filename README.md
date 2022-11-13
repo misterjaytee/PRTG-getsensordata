@@ -67,7 +67,8 @@ Additionally, you should install the module for your backend database driver. Fo
 PyMySQL
 
 <br/>
-To install the dependencies, including the PyMySQL driver, run:
+
+To install the dependencies, including the PyMySQL driver, run:  
 ```shell
 pip3 install -r requirements.txt
 ```
