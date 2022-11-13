@@ -55,12 +55,22 @@ prtghost.example.com/sensor.htm?id=12345&tabid=1
 ## Dependencies
 <br/>
 
-This script was written and tested using Python 3.9 and uses the following Python modules:  
+This script was written and tested using Python 3.9 and uses the following Python modules (the first two should come with Python):  
 configparser  
 datetime  
-dateutil  
 pandas  
-sqlalchemy  
-<br/>
+python-dateutil  
+SQLAlchemy  
 
+
+Additionally, you should install the module for your backend database driver. For MySQL use:  
+PyMySQL
+
+<br/>
+To install the dependencies, including the PyMySQL driver, run:
+```shell
+pip3 install -r requirements.txt
+```
+
+<br>
 Make sure that the dependencies are installed before running the script.
