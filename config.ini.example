@@ -20,6 +20,7 @@ password=mysecretpassword
 # Set port to 0 to use default for db engine
 port=3306
 # What action to perform if the table already exists
+# Options are: append, replace, fail
 # default action is fail
 action=append
 

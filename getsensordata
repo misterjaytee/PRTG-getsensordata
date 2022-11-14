@@ -6,8 +6,8 @@
 # and import into own backend database (e.g. MySQL)        #
 #                                                          #
 # Author: Jim Turnbull                                     #
-# Modified: 13/11/2022                                     #
-# Version 0.10                                             #
+# Modified: 14/11/2022                                     #
+# Version 0.20                                             #
 #                                                          #
 ############################################################
 
@@ -19,6 +19,15 @@ v=[sys.version_info.major, sys.version_info.minor]
 if v[0] < 3 or v[1] < 9:
     print("Python version 3.9 or above required to run this script")
     exit()
+
+# Due to differences in Windows and Linux date formats, 
+# get current locale date format and make it a 4-digit year
+# which is common on Windows where PRTG will be installed
+# Makes a reasonable assumption that the locale of the PRTG server
+# is using the same locale as the server running this script
+import locale
+locale.setlocale(locale.LC_ALL, '')
+dateformat=str(locale.nl_langinfo(locale.D_FMT)).replace('y','Y')
 
 # Read in sections from config file
 filename="config.ini"
@@ -32,11 +41,13 @@ except:
 try:
     parser=ConfigParser()
     parser.read(filename)
+    config=parser["config"]
     database=parser["database"]
-    prtg=parser["prtg"]
     sensorarray=parser["sensors"]
-    debug=int(parser["debug"].get("debug", fallback="0"))
-    debugdays=int(parser["debug"].get("debugdays", fallback="4"))
+    prtg=parser["prtg"]
+    debug=parser["debug"]
+    isdebug=int(debug.get("debug", fallback="0"))
+    debugdays=int(debug.get("debugdays", fallback="4"))
     dbaction=str(database.get("action", fallback="fail"))
     dbport=int(database.get("port", fallback="0"))
     strdbport=":" + str(dbport) if dbport !=0 else ""
@@ -44,6 +55,9 @@ try:
 except:
     print("Could not read configuration file, or required parameters are missing")
     exit()
+
+# Clear line variable
+clear='\x1b[2K'
 
 # Set month from command line if passed, otherwise get from config file
 if len(sys.argv) == 2:
@@ -97,8 +111,10 @@ else:
     first_date=datetime(lastmonth.year, lastmonth.month, 1)
     end_date=datetime(lastmonth.year + 1 if month==12 else lastmonth.year, 1 if month == 12 else month + 1, 1)
 
+year=lastmonth.year
+
 # For debug (less days) add debug="1" to the debug section in the ini file
-if debug==1:
+if isdebug==1:
     end_date=end_date.replace(month=lastmonth.month,day=debugdays)
 
 day_count=(end_date-first_date).days
@@ -117,19 +133,19 @@ def exportdata(table,sensor):
     
     # Check if we already have data for the requested month for this sensor
     # and if so, then return immediately as we do not want to duplicate data
-    hadtable=false
-    check_date=(end_date - timedelta(days=1)).strftime('%d/%m/%Y')
-    if insp.has_table(table):
-        hadtable=true
-        check=engine.execute("select * from " + str(table) + " where `DateTime` like '" + check_date + " %%' limit 1;")
+    hadtable=False
+    if insp.has_table(table) and dbaction != "replace":
+        hadtable=True
+        check=engine.execute("select * from " + str(table) + " where month(`DateTime`)=" + 
+            str(lastmonth.month) + " and year(`DateTime`)=" + str(year) + " limit 1;")
         if check.rowcount > 0:
-            print("Sensor data for " + str(table) + " already exists in database " + db + " for " + first_date.strftime("%B %Y") )
+            print(clear + "Skipping " + str(table) + " - Data for " + first_date.strftime("%B %Y") + " already exists in database " + db +"\r", end='', flush=True )
             return
 
     # Build URL for the first day in the dataset
     # so that we have our column data and initial results
 
-    print("Getting sensor data for " + str(table) + ": " + str(first_date),"\r",end='')
+    print(clear + "Getting sensor data for " + str(table) + ": " + str(first_date),"\r", end='',flush=True)
     getURL=str(url +
         "id=" + sensor +
         "&sdate=" + first_date.strftime('%Y-%m-%d-00-00-00') +
@@ -141,14 +157,14 @@ def exportdata(table,sensor):
     try:
         alldata=pd.read_csv(getURL)
     except:
-        print("Could not fetch data from", url)
+        print(clear + "Could not fetch data from", url)
         exit()
 
     getURL=""
 
     # Now iterate through the remaining days and add them to the dataset
     for single_date in ((first_date + timedelta(days=1)) + timedelta(n) for n in range(day_count - 1)):
-        print("Getting sensor data for " + str(table) + ": " + str(single_date),"\r",end='')
+        print(clear + "Getting sensor data for " + str(table) + ": " + str(single_date),"\r", end='',flush=True)
         getURL=str(url +
         "id=" + sensor +
         "&sdate=" + single_date.strftime('%Y-%m-%d-00-00-00') +
@@ -157,8 +173,7 @@ def exportdata(table,sensor):
         "&apitoken=" + apitoken)
         alldata=pd.concat([alldata,pd.read_csv(getURL)],ignore_index=True, sort=False)
 
-    print(' ' * (len("Getting sensor data for " + str(table) + ": " + str(first_date))),"\r",end='')
-    print("Writing " + str(table) + " data to database " + db,"\r",end='')
+    print(clear + "Writing " + str(table) + " data to database " + db,"\r", end='',flush=True)
 
     # Strip spaces from column names
     alldata.columns = [c.replace(' ','') for c in alldata.columns]
@@ -168,20 +183,25 @@ def exportdata(table,sensor):
     alldata = alldata[~alldata['DateTime'].str.contains('Sums')]
     alldata = alldata[~alldata['DateTime'].str.contains('Averages')]
 
+    # Convert DateTime column to datetime
+    alldata['DateTime']=pd.to_datetime(alldata['DateTime'], format=str(dateformat + " %X"))
+
     try:
-        if hadtable==false:
+        if hadtable==False:
             alldata.index += 1
             alldata.to_sql(table, con=engine, if_exists=dbaction, index=True, index_label='id')
             engine.execute('ALTER TABLE ' + str(table) + ' MODIFY id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY;')
+            engine.execute('CREATE INDEX ix_' + str(table) + '_datetime ON ' + str(table) + '  (DateTime);')
         else:
             alldata.to_sql(table, con=engine, if_exists=dbaction, index=False)
     except:
-        print("Error writing to database", db)
+        print(clear + "Error writing to database", db)
         exit()
 
-    print(' ' * len("Writing " + str(table) + " data to database " + db),"\r",end='')
-    print("Data for", table, "written to database", db)
+    print(clear + "Data for", table, "written to database", db, flush=True)
 
 
 for sensor in sensorarray:
     exportdata(sensor,sensorarray[sensor])
+
+print(clear + "Done.\n", end='',flush=True)
