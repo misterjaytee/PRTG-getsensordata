@@ -17,6 +17,14 @@ If you need to add another sensor, then add it to config.ini and re-run the scri
 
 <br/>
 
+There is now a daily option in config.ini that checks if data exists per day rather than simply checking if data exists for the specified month. So if there is data missing for a specific day (e.g. you had a problem with PRTG and only collected 30 days for December), set the daily flag (daily=1) and re-run the script. Assuming the data now exists in PRTG, it will fill in the last day of December.  
+
+Additionally, the daily flag can be used in conjunction with specifying the current month to start collecting data for the current month rather than last month. For example, in January set month=1 and daily=1 and it will start collecting data for this month. You can re-run this every day and it will skip data that it already has for previous days.  
+
+Using daily does slow things down because a check is done for every day rather than for the month, so there will be between 28 and 31 checks for existing data if checking a previous month of data. Only use the daily option for backfills where single days are missing, or for starting collation of data for the current month.  
+
+<br/>
+
 ## Setup
 <br/>
 

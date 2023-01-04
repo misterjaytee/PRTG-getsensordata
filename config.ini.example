@@ -6,9 +6,13 @@
 # Add a month number to get a specific month of data
 # e.g month=8 will get August's data for this year
 # Setting month to the same as the current month
-# will download the same month but in the previous year.
+# will download the same month but in the previous year,
+# unless daily is set to "1", then it will download
+# what it can from the current month (up until yesterday).
+# See README.md for more info on the daily option.
 # Default is month=0 to get last month's data
 month=0
+daily=0
 
 [database]
 backend=mysql

@@ -6,8 +6,8 @@
 # and import into own backend database (e.g. MySQL)        #
 #                                                          #
 # Author: Jim Turnbull                                     #
-# Modified: 14/11/2022                                     #
-# Version 0.20                                             #
+# Modified: 04/01/2023                                     #
+# Version 0.30                                             #
 #                                                          #
 ############################################################
 
@@ -42,6 +42,7 @@ try:
     parser=ConfigParser()
     parser.read(filename)
     config=parser["config"]
+    isdaily=int(config.get("daily", fallback="0"))
     database=parser["database"]
     sensorarray=parser["sensors"]
     prtg=parser["prtg"]
@@ -97,8 +98,8 @@ except:
 # year goes to previous year if run in January
 now=datetime.now()
 if month==0:
-    lastmonth=(now - relativedelta(months=1))
-    first_date=datetime(lastmonth.year, lastmonth.month, 1)
+    processmonth=(now - relativedelta(months=1))
+    first_date=datetime(processmonth.year, processmonth.month, 1)
     end_date=datetime(now.year, now.month, 1)
 # Work out start and end dates if month
 # specified in config file
@@ -106,18 +107,24 @@ else:
     if month > 12:
         print("Month greater than 12, setting month to 12")
         month=12
-    # If month in file is same as this month, assume that we want to download the data from same month last year
-    lastmonth=(now - relativedelta(months=now.month + 12 - month if month > now.month else 12 if now.month==month else now.month - month))
-    first_date=datetime(lastmonth.year, lastmonth.month, 1)
-    end_date=datetime(lastmonth.year + 1 if month==12 else lastmonth.year, 1 if month == 12 else month + 1, 1)
+    # If month in file is same as this month, assume that we want to download the data from same month last year (unless daily=1)
+    if isdaily==1 and now.month==month:
+        processmonth=now
+        end_date=datetime(now.year, now.month, now.day)
+    else:
+        processmonth=(now - relativedelta(months=now.month + 12 - month if month > now.month else 12 if now.month==month else now.month - month))
+        end_date=datetime(processmonth.year + 1 if month==12 else processmonth.year, 1 if month == 12 else month + 1, 1)
+    first_date=datetime(processmonth.year, processmonth.month, 1)
 
-year=lastmonth.year
+year=processmonth.year
 
 # For debug (less days) add debug="1" to the debug section in the ini file
 if isdebug==1:
-    end_date=end_date.replace(month=lastmonth.month,day=debugdays)
+    end_date=end_date.replace(year=processmonth.year,month=processmonth.month,day=debugdays)
 
 day_count=(end_date-first_date).days
+
+lastpossday=(first_date+relativedelta(day=debugdays if isdebug else 31)).day
 
 print("Fetching data from " + prtg["prtghost"] + " for " + first_date.strftime("%B %Y"))
 
@@ -136,20 +143,42 @@ def exportdata(table,sensor):
     hadtable=False
     if insp.has_table(table) and dbaction != "replace":
         hadtable=True
-        check=engine.execute("select * from " + str(table) + " where month(`DateTime`)=" + 
-            str(lastmonth.month) + " and year(`DateTime`)=" + str(year) + " limit 1;")
-        if check.rowcount > 0:
+        havedays=0
+        if isdaily==1:
+            for single_date in ((first_date ) + timedelta(n) for n in range(day_count)):
+                check=engine.execute("select * from " + str(table) + " where day(`DateTime`)=" + str(single_date.day) + 
+                " and month(`DateTime`)=" + str(processmonth.month) + 
+                " and year(`DateTime`)=" + str(year) + " limit 1;")
+                if check.rowcount > 0:
+                    print(clear + "Skipping " + str(table) + " - Data for " + single_date.strftime("%d %B %Y") + " already exists in database " + db +"\r", end='', flush=True )
+                    havedays=single_date.day
+            if havedays==lastpossday:
+                return
+            else:
+                process_first_date=first_date.replace(day=havedays + 1)
+                process_day_count=(end_date-process_first_date).days
+        else:
+            check=engine.execute("select * from " + str(table) + " where month(`DateTime`)=" + 
+                str(processmonth.month) + " and year(`DateTime`)=" + str(year) + " limit 1;")
+            if check.rowcount > 0:
+                print(clear + "Skipping " + str(table) + " - Data for " + first_date.strftime("%B %Y") + " already exists in database " + db +"\r", end='', flush=True )
+                return
+            else:
+                process_first_date=first_date
+                process_day_count=(end_date-process_first_date).days
+
+        if process_day_count < 1:
             print(clear + "Skipping " + str(table) + " - Data for " + first_date.strftime("%B %Y") + " already exists in database " + db +"\r", end='', flush=True )
             return
 
     # Build URL for the first day in the dataset
     # so that we have our column data and initial results
 
-    print(clear + "Getting sensor data for " + str(table) + ": " + str(first_date),"\r", end='',flush=True)
+    print(clear + "Getting sensor data for " + str(table) + ": " + str(process_first_date),"\r", end='',flush=True)
     getURL=str(url +
         "id=" + sensor +
-        "&sdate=" + first_date.strftime('%Y-%m-%d-00-00-00') +
-        "&edate=" + (first_date + timedelta(days=1)).strftime('%Y-%m-%d-00-00-00') +
+        "&sdate=" + process_first_date.strftime('%Y-%m-%d-00-00-00') +
+        "&edate=" + (process_first_date + timedelta(days=1)).strftime('%Y-%m-%d-00-00-00') +
         "&avg=0&pctavg=0&pctshow=false&pct=0&pctmode=false" +
         "&apitoken=" + apitoken)
 
@@ -163,7 +192,7 @@ def exportdata(table,sensor):
     getURL=""
 
     # Now iterate through the remaining days and add them to the dataset
-    for single_date in ((first_date + timedelta(days=1)) + timedelta(n) for n in range(day_count - 1)):
+    for single_date in ((process_first_date + timedelta(days=1)) + timedelta(n) for n in range(process_day_count - 1)):
         print(clear + "Getting sensor data for " + str(table) + ": " + str(single_date),"\r", end='',flush=True)
         getURL=str(url +
         "id=" + sensor +
