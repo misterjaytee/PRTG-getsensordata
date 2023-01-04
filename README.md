@@ -13,7 +13,7 @@ If there is a need to backfill data for other months, then the script can be run
 ```
 
 <br/>
-If you need to add another sensor, then add it to config.ini and re-run the script. The script will simply skip sensor data collection where it already has data for other sensors and will download just the data for the new sensor.
+If you need to add another sensor, then add it to config.ini and re-run the script. The script will simply skip sensor data collection where it already has data for other sensors and will download just the data for the new sensor.  
 
 <br/>
 
@@ -28,7 +28,7 @@ Using daily does slow things down because a check is done for every day rather t
 ## Setup
 <br/>
 
-Copy config.ini.example to config.ini.  
+Copy config.ini.example to config.ini (must be in the same folder as the getsensordata program).  
 <br/>
 
 Create a database on your database server and give a user access to the database, e.g. for MySQL:  

@@ -7,11 +7,11 @@
 #                                                          #
 # Author: Jim Turnbull                                     #
 # Modified: 04/01/2023                                     #
-# Version 0.30                                             #
+# Version 0.31                                             #
 #                                                          #
 ############################################################
 
-import sys
+import sys, os
 
 # Check for minimum Python version 3.9
 v=[sys.version_info.major, sys.version_info.minor]
@@ -30,7 +30,7 @@ locale.setlocale(locale.LC_ALL, '')
 dateformat=str(locale.nl_langinfo(locale.D_FMT)).replace('y','Y')
 
 # Read in sections from config file
-filename="config.ini"
+filename=str(os.path.dirname(os.path.abspath(__file__))) + "/config.ini"
 
 try:
     from configparser import ConfigParser
